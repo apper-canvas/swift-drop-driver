@@ -339,5 +339,3 @@ class UploadService {
 }
 
 export default new UploadService();
-
-export default new UploadService();
