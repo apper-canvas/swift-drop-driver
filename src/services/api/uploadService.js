@@ -1,30 +1,152 @@
-import uploadSettingsData from "@/services/mockData/uploadSettings.json";
+import { toast } from "react-toastify";
 
 class UploadService {
   constructor() {
     this.uploads = new Map();
-    this.settings = { ...uploadSettingsData };
+    this.apperClient = null;
+    this.currentSettings = null;
+    this.initializeClient();
+  }
+
+  initializeClient() {
+    const { ApperClient } = window.ApperSDK;
+    this.apperClient = new ApperClient({
+      apperProjectId: import.meta.env.VITE_APPER_PROJECT_ID,
+      apperPublicKey: import.meta.env.VITE_APPER_PUBLIC_KEY
+    });
   }
 
   async getSettings() {
-    await this.delay(100);
-    return { ...this.settings };
+    try {
+      const params = {
+        fields: [
+          {"field": {"Name": "Name"}},
+          {"field": {"Name": "max_file_size_c"}},
+          {"field": {"Name": "allowed_types_c"}},
+          {"field": {"Name": "max_concurrent_uploads_c"}},
+          {"field": {"Name": "auto_compress_c"}}
+        ],
+        orderBy: [{"fieldName": "Id", "sorttype": "DESC"}],
+        pagingInfo: {"limit": 1, "offset": 0}
+      };
+
+      const response = await this.apperClient.fetchRecords("upload_setting_c", params);
+      
+      if (!response.success) {
+        console.error(response.message);
+        toast.error(response.message);
+        return this.getDefaultSettings();
+      }
+
+      if (!response.data || response.data.length === 0) {
+        return this.getDefaultSettings();
+      }
+
+      const setting = response.data[0];
+      const allowedTypesArray = setting.allowed_types_c ? setting.allowed_types_c.split(',') : [];
+      
+      const settings = {
+        maxFileSize: setting.max_file_size_c || 10485760,
+        allowedTypes: allowedTypesArray,
+        maxConcurrentUploads: setting.max_concurrent_uploads_c || 3,
+        autoCompress: setting.auto_compress_c || false
+      };
+
+      this.currentSettings = settings;
+      return settings;
+    } catch (error) {
+      console.error("Error fetching upload settings:", error?.response?.data?.message || error);
+      return this.getDefaultSettings();
+    }
+  }
+
+  getDefaultSettings() {
+    const defaultSettings = {
+      maxFileSize: 10485760,
+      allowedTypes: [
+        "image/jpeg", "image/png", "image/gif", "image/webp",
+        "application/pdf", "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "text/plain", "text/csv", "application/zip",
+        "video/mp4", "video/quicktime", "audio/mp3", "audio/wav"
+      ],
+      maxConcurrentUploads: 3,
+      autoCompress: false
+    };
+    this.currentSettings = defaultSettings;
+    return defaultSettings;
   }
 
   async updateSettings(newSettings) {
-    await this.delay(200);
-    this.settings = { ...this.settings, ...newSettings };
-    return { ...this.settings };
+    try {
+      const allowedTypesString = newSettings.allowedTypes ? newSettings.allowedTypes.join(',') : '';
+      
+      const updateData = {
+        records: [{
+          Name: "Default Upload Settings",
+          max_file_size_c: newSettings.maxFileSize,
+          allowed_types_c: allowedTypesString,
+          max_concurrent_uploads_c: newSettings.maxConcurrentUploads,
+          auto_compress_c: newSettings.autoCompress
+        }]
+      };
+
+      // Try to get existing record first
+      const existingResponse = await this.apperClient.fetchRecords("upload_setting_c", {
+        fields: [{"field": {"Name": "Id"}}],
+        pagingInfo: {"limit": 1, "offset": 0}
+      });
+
+      let response;
+      if (existingResponse.success && existingResponse.data && existingResponse.data.length > 0) {
+        // Update existing record
+        updateData.records[0].Id = existingResponse.data[0].Id;
+        response = await this.apperClient.updateRecord("upload_setting_c", updateData);
+      } else {
+        // Create new record
+        response = await this.apperClient.createRecord("upload_setting_c", updateData);
+      }
+
+      if (!response.success) {
+        console.error(response.message);
+        toast.error(response.message);
+        return this.currentSettings;
+      }
+
+      if (response.results) {
+        const successful = response.results.filter(r => r.success);
+        const failed = response.results.filter(r => !r.success);
+        
+        if (failed.length > 0) {
+          console.error(`Failed to update settings: ${JSON.stringify(failed)}`);
+          failed.forEach(record => {
+            if (record.message) toast.error(record.message);
+          });
+        }
+
+        if (successful.length > 0) {
+          this.currentSettings = { ...newSettings };
+          return this.currentSettings;
+        }
+      }
+
+      return this.currentSettings;
+    } catch (error) {
+      console.error("Error updating upload settings:", error?.response?.data?.message || error);
+      toast.error("Failed to update settings");
+      return this.currentSettings;
+    }
   }
 
   validateFile(file) {
     const errors = [];
+    const settings = this.currentSettings || this.getDefaultSettings();
     
-    if (file.size > this.settings.maxFileSize) {
-      errors.push(`File size exceeds ${this.formatFileSize(this.settings.maxFileSize)} limit`);
+    if (file.size > settings.maxFileSize) {
+      errors.push(`File size exceeds ${this.formatFileSize(settings.maxFileSize)} limit`);
     }
     
-    if (!this.settings.allowedTypes.includes(file.type)) {
+    if (!settings.allowedTypes.includes(file.type)) {
       errors.push("File type not allowed");
     }
     
@@ -58,6 +180,9 @@ class UploadService {
     try {
       await this.simulateUpload(fileId, onProgress);
       
+      // Create database record for uploaded file
+      await this.createUploadedFileRecord(uploadData);
+      
       // Mark as completed
       uploadData.status = "completed";
       uploadData.progress = 100;
@@ -67,7 +192,39 @@ class UploadService {
     } catch (error) {
       uploadData.status = "error";
       uploadData.error = error.message;
+      
+      // Create error record in database
+      await this.createUploadedFileRecord({ ...uploadData, status: "error", error: error.message });
+      
       throw error;
+    }
+  }
+
+  async createUploadedFileRecord(uploadData) {
+    try {
+      const fileRecord = {
+        records: [{
+          Name: uploadData.name,
+          name_c: uploadData.name,
+          size_c: uploadData.size,
+          type_c: uploadData.type,
+          status_c: uploadData.status,
+          progress_c: uploadData.progress,
+          url_c: uploadData.url || "",
+          upload_speed_c: uploadData.uploadSpeed || 0,
+          time_remaining_c: uploadData.timeRemaining || 0,
+          error_c: uploadData.error || "",
+          file_id_c: uploadData.id
+        }]
+      };
+
+      const response = await this.apperClient.createRecord("uploaded_file_c", fileRecord);
+      
+      if (!response.success) {
+        console.error("Failed to save file record:", response.message);
+      }
+    } catch (error) {
+      console.error("Error creating uploaded file record:", error?.response?.data?.message || error);
     }
   }
 
@@ -115,6 +272,9 @@ class UploadService {
     if (uploadData) {
       uploadData.status = "cancelled";
       uploadData.error = "Upload cancelled by user";
+      
+      // Update database record
+      await this.createUploadedFileRecord(uploadData);
     }
     return uploadData;
   }
@@ -131,6 +291,10 @@ class UploadService {
     
     try {
       await this.simulateUpload(fileId, onProgress);
+      
+      // Update database record
+      await this.createUploadedFileRecord(uploadData);
+      
       uploadData.status = "completed";
       uploadData.progress = 100;
       uploadData.url = `https://example.com/files/${fileId}/${encodeURIComponent(uploadData.name)}`;
@@ -138,6 +302,10 @@ class UploadService {
     } catch (error) {
       uploadData.status = "error";
       uploadData.error = error.message;
+      
+      // Update error record in database
+      await this.createUploadedFileRecord(uploadData);
+      
       throw error;
     }
   }
@@ -169,5 +337,7 @@ class UploadService {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
+
+export default new UploadService();
 
 export default new UploadService();

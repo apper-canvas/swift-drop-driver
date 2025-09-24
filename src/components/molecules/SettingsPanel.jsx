@@ -1,10 +1,10 @@
 import React, { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/atoms/Card";
+import ApperIcon from "@/components/ApperIcon";
 import Button from "@/components/atoms/Button";
 import Input from "@/components/atoms/Input";
 import Label from "@/components/atoms/Label";
-import ApperIcon from "@/components/ApperIcon";
 
 const SettingsPanel = ({ settings, onSettingsChange, isOpen, onToggle }) => {
   const [localSettings, setLocalSettings] = useState(settings);
@@ -43,22 +43,23 @@ const SettingsPanel = ({ settings, onSettingsChange, isOpen, onToggle }) => {
   };
 
   return (
-    <div className="relative">
-      {/* Toggle Button */}
+    <div className="space-y-4">
+      {/* Settings Toggle Button */}
       <Button
         variant="outline"
         onClick={onToggle}
-        className="mb-4 inline-flex items-center space-x-2"
+        className="w-full justify-between"
       >
-        <ApperIcon name="Settings" className="w-4 h-4" />
-        <span>Upload Settings</span>
+        <div className="flex items-center space-x-2">
+          <ApperIcon name="Settings" className="w-4 h-4" />
+          <span>Upload Settings</span>
+        </div>
         <ApperIcon 
           name={isOpen ? "ChevronUp" : "ChevronDown"} 
           className="w-4 h-4" 
         />
       </Button>
 
-      {/* Settings Panel */}
       <AnimatePresence>
         {isOpen && (
           <motion.div

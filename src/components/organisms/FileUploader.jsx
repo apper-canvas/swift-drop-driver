@@ -1,16 +1,17 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import React, { useCallback, useContext, useEffect, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "react-toastify";
-import DropZone from "@/components/molecules/DropZone";
+import { useSelector } from "react-redux";
+import { AuthContext } from "../../App";
+import uploadService from "@/services/api/uploadService";
+import ApperIcon from "@/components/ApperIcon";
 import FileCard from "@/components/molecules/FileCard";
 import SettingsPanel from "@/components/molecules/SettingsPanel";
+import DropZone from "@/components/molecules/DropZone";
 import Loading from "@/components/ui/Loading";
-import Error from "@/components/ui/Error";
 import Empty from "@/components/ui/Empty";
+import Error from "@/components/ui/Error";
 import Button from "@/components/atoms/Button";
-import ApperIcon from "@/components/ApperIcon";
-import uploadService from "@/services/api/uploadService";
-
 const FileUploader = () => {
   const [files, setFiles] = useState([]);
   const [settings, setSettings] = useState(null);
@@ -20,11 +21,14 @@ const FileUploader = () => {
   const [uploadQueue, setUploadQueue] = useState([]);
   const [activeUploads, setActiveUploads] = useState(0);
 
-  useEffect(() => {
+  const { logout } = useContext(AuthContext);
+  const { user, isAuthenticated } = useSelector((state) => state.user);
+
+useEffect(() => {
     loadSettings();
   }, []);
 
-  const loadSettings = async () => {
+const loadSettings = async () => {
     try {
       setLoading(true);
       setError(null);
@@ -81,7 +85,7 @@ const FileUploader = () => {
     processUploadQueue();
   }, [processUploadQueue]);
 
-  const handleFilesSelected = (selectedFiles) => {
+const handleFilesSelected = (selectedFiles) => {
     if (!settings) return;
 
     const newFiles = selectedFiles.map(file => ({
@@ -116,6 +120,7 @@ const FileUploader = () => {
     toast.info(`Added ${validFiles.length} file${validFiles.length > 1 ? "s" : ""} to upload queue`);
   };
 
+
   const handleRetry = async (fileId) => {
     const file = files.find(f => f.id === fileId);
     if (!file) return;
@@ -136,7 +141,7 @@ const FileUploader = () => {
     toast.info("Upload cancelled");
   };
 
-  const handleClearCompleted = () => {
+const handleClearCompleted = () => {
     const completedCount = files.filter(f => f.status === "completed").length;
     setFiles(prev => prev.filter(f => f.status !== "completed"));
     
@@ -145,7 +150,7 @@ const FileUploader = () => {
     }
   };
 
-  const handleSettingsChange = async (newSettings) => {
+const handleSettingsChange = async (newSettings) => {
     try {
       const updated = await uploadService.updateSettings(newSettings);
       setSettings(updated);
@@ -155,7 +160,7 @@ const FileUploader = () => {
     }
   };
 
-  const getUploadStats = () => {
+const getUploadStats = () => {
     const completed = files.filter(f => f.status === "completed").length;
     const uploading = files.filter(f => f.status === "uploading").length;
     const pending = files.filter(f => f.status === "pending").length;
@@ -164,16 +169,16 @@ const FileUploader = () => {
     return { completed, uploading, pending, errors, total: files.length };
   };
 
-  const stats = getUploadStats();
+const stats = getUploadStats();
 
   if (loading) return <Loading />;
   if (error) return <Error message={error} onRetry={loadSettings} />;
 
-  return (
+return (
     <div className="max-w-4xl mx-auto p-6 space-y-8">
-      {/* Header */}
-      <div className="text-center space-y-4">
-        <div className="flex items-center justify-center space-x-3">
+      {/* Header with User Info and Logout */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center space-x-3">
           <div className="w-12 h-12 bg-gradient-to-br from-primary-500 to-primary-600 rounded-xl flex items-center justify-center">
             <ApperIcon name="Zap" className="w-6 h-6 text-white" />
           </div>
@@ -184,6 +189,27 @@ const FileUploader = () => {
             <p className="text-gray-600">Fast, reliable file uploads</p>
           </div>
         </div>
+        
+        {/* User Info and Logout */}
+        {isAuthenticated && user && (
+          <div className="flex items-center space-x-4">
+            <div className="text-right">
+              <div className="text-sm font-medium text-gray-900">
+                {user.firstName} {user.lastName}
+              </div>
+              <div className="text-xs text-gray-500">{user.emailAddress}</div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={logout}
+              className="inline-flex items-center space-x-1"
+            >
+              <ApperIcon name="LogOut" className="w-4 h-4" />
+              <span>Logout</span>
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Settings Panel */}
